@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const apiKey = process.env.POLYGON_API_KEY;
 
@@ -14,10 +16,8 @@ export async function GET() {
   }
 
   try {
-    const ticker = encodeURIComponent("C:XAUUSD");
-
     const response = await fetch(
-      `https://api.massive.com/v2/snapshot/locale/global/markets/forex/tickers/${ticker}?apiKey=${apiKey}`,
+      `https://api.massive.com/v1/last_quote/currencies/XAU/USD?apiKey=${apiKey}`,
       {
         cache: "no-store",
       }
@@ -25,37 +25,43 @@ export async function GET() {
 
     const data = await response.json();
 
-    if (!response.ok || data.status !== "OK" || !data.ticker) {
+    if (!response.ok || !data.last) {
       return NextResponse.json(
         {
           success: false,
           provider: "Massive",
-          error: data.message ?? "Gold ticker unavailable",
+          error: data.message ?? "No XAU/USD quote was returned",
           data,
         },
         { status: response.status || 502 }
       );
     }
 
-    const bid = data.ticker.lastQuote?.b ?? null;
-    const ask = data.ticker.lastQuote?.a ?? null;
-    const midpoint =
-      typeof bid === "number" && typeof ask === "number"
-        ? (bid + ask) / 2
-        : data.ticker.min?.c ?? data.ticker.day?.c ?? null;
+    const bid =
+      typeof data.last.bid === "number" ? data.last.bid : null;
+
+    const ask =
+      typeof data.last.ask === "number" ? data.last.ask : null;
+
+    const price =
+      bid !== null && ask !== null
+        ? Number(((bid + ask) / 2).toFixed(3))
+        : bid ?? ask;
 
     return NextResponse.json({
       success: true,
       provider: "Massive",
-      symbol: data.ticker.ticker,
-      price: midpoint,
+      symbol: "C:XAUUSD",
+      price,
       bid,
       ask,
-      day: data.ticker.day ?? null,
-      previousDay: data.ticker.prevDay ?? null,
-      change: data.ticker.todaysChange ?? null,
-      changePercent: data.ticker.todaysChangePerc ?? null,
-      updated: data.ticker.updated ?? null,
+      spread:
+        bid !== null && ask !== null
+          ? Number((ask - bid).toFixed(3))
+          : null,
+      timestamp: data.last.timestamp ?? null,
+      marketOpen: false,
+      note: "Most recently available XAU/USD quote",
     });
   } catch (error) {
     return NextResponse.json(
