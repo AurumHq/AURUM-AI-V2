@@ -14,8 +14,10 @@ export async function GET() {
   }
 
   try {
+    const ticker = encodeURIComponent("C:XAUUSD");
+
     const response = await fetch(
-      `https://api.massive.com/v3/reference/tickers/XAUUSD?apiKey=${apiKey}`,
+      `https://api.massive.com/v2/snapshot/locale/global/markets/forex/tickers/${ticker}?apiKey=${apiKey}`,
       {
         cache: "no-store",
       }
@@ -23,17 +25,45 @@ export async function GET() {
 
     const data = await response.json();
 
+    if (!response.ok || data.status !== "OK" || !data.ticker) {
+      return NextResponse.json(
+        {
+          success: false,
+          provider: "Massive",
+          error: data.message ?? "Gold ticker unavailable",
+          data,
+        },
+        { status: response.status || 502 }
+      );
+    }
+
+    const bid = data.ticker.lastQuote?.b ?? null;
+    const ask = data.ticker.lastQuote?.a ?? null;
+    const midpoint =
+      typeof bid === "number" && typeof ask === "number"
+        ? (bid + ask) / 2
+        : data.ticker.min?.c ?? data.ticker.day?.c ?? null;
+
     return NextResponse.json({
       success: true,
       provider: "Massive",
-      data,
+      symbol: data.ticker.ticker,
+      price: midpoint,
+      bid,
+      ask,
+      day: data.ticker.day ?? null,
+      previousDay: data.ticker.prevDay ?? null,
+      change: data.ticker.todaysChange ?? null,
+      changePercent: data.ticker.todaysChangePerc ?? null,
+      updated: data.ticker.updated ?? null,
     });
-  } catch (err) {
+  } catch (error) {
     return NextResponse.json(
       {
         success: false,
         error: "Unable to reach Massive API",
-        details: err instanceof Error ? err.message : "Unknown error",
+        details:
+          error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 }
     );
