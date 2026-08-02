@@ -11,13 +11,23 @@ type Candle = {
 type RsiResponse = {
   success: boolean;
   rsi?: number;
-  previousRsi?: number;
-  change?: number;
   condition?: "OVERSOLD" | "OVERBOUGHT" | "NEUTRAL";
   momentum?: "BULLISH" | "BEARISH" | "FLAT";
   signal?: "BUY_BIAS" | "SELL_BIAS" | "HOLD";
   strength?: number;
-  reasons?: string[];
+  error?: string;
+};
+
+type MacdResponse = {
+  success: boolean;
+  macd?: number;
+  signalLine?: number;
+  histogram?: number;
+  histogramChange?: number;
+  signal?: "BULLISH" | "BEARISH" | "NEUTRAL";
+  momentum?: "STRENGTHENING" | "WEAKENING" | "FLAT";
+  crossover?: "BULLISH_CROSS" | "BEARISH_CROSS" | "NONE";
+  strength?: number;
   error?: string;
 };
 
@@ -42,15 +52,17 @@ export async function GET(request: Request) {
   const base = new URL(request.url).origin;
 
   try {
-    const [historyRes, goldRes, rsiRes] = await Promise.all([
+    const [historyRes, goldRes, rsiRes, macdRes] = await Promise.all([
       fetch(`${base}/api/history`, { cache: "no-store" }),
       fetch(`${base}/api/gold`, { cache: "no-store" }),
       fetch(`${base}/api/rsi`, { cache: "no-store" }),
+      fetch(`${base}/api/macd`, { cache: "no-store" }),
     ]);
 
     const history = await historyRes.json();
     const gold = await goldRes.json();
     const rsi: RsiResponse = await rsiRes.json();
+    const macd: MacdResponse = await macdRes.json();
 
     if (!historyRes.ok || !history.success) {
       return NextResponse.json(
@@ -69,6 +81,13 @@ export async function GET(request: Request) {
     if (!rsiRes.ok || !rsi.success) {
       return NextResponse.json(
         { success: false, error: rsi.error || "RSI engine unavailable." },
+        { status: 502 }
+      );
+    }
+
+    if (!macdRes.ok || !macd.success) {
+      return NextResponse.json(
+        { success: false, error: macd.error || "MACD engine unavailable." },
         { status: 502 }
       );
     }
@@ -116,105 +135,137 @@ export async function GET(request: Request) {
 
     let bullishScore = 0;
     let bearishScore = 0;
-
     const reasons: string[] = [];
-    const scoreBreakdown = {
-      ema: { bullish: 0, bearish: 0 },
-      rsi: { bullish: 0, bearish: 0 },
-      location: { bullish: 0, bearish: 0 },
-      structure: { bullish: 0, bearish: 0 },
+
+    const breakdown = {
+      ema: { bullish: 0, bearish: 0, max: 35 },
+      rsi: { bullish: 0, bearish: 0, max: 20 },
+      macd: { bullish: 0, bearish: 0, max: 20 },
+      location: { bullish: 0, bearish: 0, max: 10 },
+      structure: { bullish: 0, bearish: 0, max: 15 },
     };
 
-    // EMA block: 40 points total
+    // EMA: 35 points
     if (live > ema20) {
       bullishScore += 10;
-      scoreBreakdown.ema.bullish += 10;
+      breakdown.ema.bullish += 10;
       reasons.push("Price is above EMA 20.");
     } else {
       bearishScore += 10;
-      scoreBreakdown.ema.bearish += 10;
+      breakdown.ema.bearish += 10;
       reasons.push("Price is below EMA 20.");
     }
 
     if (ema20 > ema50) {
       bullishScore += 10;
-      scoreBreakdown.ema.bullish += 10;
+      breakdown.ema.bullish += 10;
       reasons.push("EMA 20 is above EMA 50.");
     } else {
       bearishScore += 10;
-      scoreBreakdown.ema.bearish += 10;
+      breakdown.ema.bearish += 10;
       reasons.push("EMA 20 is below EMA 50.");
     }
 
     if (ema50 > ema200) {
       bullishScore += 10;
-      scoreBreakdown.ema.bullish += 10;
+      breakdown.ema.bullish += 10;
       reasons.push("EMA 50 is above EMA 200.");
     } else {
       bearishScore += 10;
-      scoreBreakdown.ema.bearish += 10;
+      breakdown.ema.bearish += 10;
       reasons.push("EMA 50 is below EMA 200.");
     }
 
     if (live > ema200) {
-      bullishScore += 10;
-      scoreBreakdown.ema.bullish += 10;
+      bullishScore += 5;
+      breakdown.ema.bullish += 5;
       reasons.push("Price is above EMA 200.");
     } else {
-      bearishScore += 10;
-      scoreBreakdown.ema.bearish += 10;
+      bearishScore += 5;
+      breakdown.ema.bearish += 5;
       reasons.push("Price is below EMA 200.");
     }
 
-    // RSI block: 30 points total
+    // RSI: 20 points
+    const rsiValue = rsi.rsi ?? 50;
+
     if (rsi.signal === "BUY_BIAS") {
-      bullishScore += 30;
-      scoreBreakdown.rsi.bullish += 30;
+      bullishScore += 20;
+      breakdown.rsi.bullish += 20;
       reasons.push("RSI confirms a bullish reversal bias.");
     } else if (rsi.signal === "SELL_BIAS") {
-      bearishScore += 30;
-      scoreBreakdown.rsi.bearish += 30;
+      bearishScore += 20;
+      breakdown.rsi.bearish += 20;
       reasons.push("RSI confirms a bearish reversal bias.");
+    } else if (rsiValue >= 55) {
+      bullishScore += 12;
+      breakdown.rsi.bullish += 12;
+      reasons.push("RSI is above neutral and supports bullish momentum.");
+    } else if (rsiValue <= 45) {
+      bearishScore += 12;
+      breakdown.rsi.bearish += 12;
+      reasons.push("RSI is below neutral and supports bearish momentum.");
     } else {
-      const rsiValue = rsi.rsi ?? 50;
-
-      if (rsiValue > 55) {
-        bullishScore += 15;
-        scoreBreakdown.rsi.bullish += 15;
-        reasons.push("RSI is above neutral and supports bullish momentum.");
-      } else if (rsiValue < 45) {
-        bearishScore += 15;
-        scoreBreakdown.rsi.bearish += 15;
-        reasons.push("RSI is below neutral and supports bearish momentum.");
-      } else {
-        bullishScore += 5;
-        bearishScore += 5;
-        scoreBreakdown.rsi.bullish += 5;
-        scoreBreakdown.rsi.bearish += 5;
-        reasons.push("RSI is neutral.");
-      }
+      bullishScore += 4;
+      bearishScore += 4;
+      breakdown.rsi.bullish += 4;
+      breakdown.rsi.bearish += 4;
+      reasons.push("RSI is neutral.");
     }
 
-    // Price-location block: 15 points total
+    // MACD: 20 points
+    if (macd.signal === "BULLISH") {
+      let points = 12;
+      if (macd.momentum === "STRENGTHENING") points += 4;
+      if (macd.crossover === "BULLISH_CROSS") points += 4;
+
+      bullishScore += points;
+      breakdown.macd.bullish += points;
+      reasons.push(
+        `MACD is bullish${
+          macd.momentum === "STRENGTHENING" ? " with strengthening momentum" : ""
+        }.`
+      );
+    } else if (macd.signal === "BEARISH") {
+      let points = 12;
+      if (macd.momentum === "STRENGTHENING") points += 4;
+      if (macd.crossover === "BEARISH_CROSS") points += 4;
+
+      bearishScore += points;
+      breakdown.macd.bearish += points;
+      reasons.push(
+        `MACD is bearish${
+          macd.momentum === "STRENGTHENING" ? " with strengthening momentum" : ""
+        }.`
+      );
+    } else {
+      bullishScore += 3;
+      bearishScore += 3;
+      breakdown.macd.bullish += 3;
+      breakdown.macd.bearish += 3;
+      reasons.push("MACD is neutral.");
+    }
+
+    // Price location: 10 points
     const positionInRange = (live - support) / range;
 
     if (positionInRange <= 0.35) {
-      bullishScore += 15;
-      scoreBreakdown.location.bullish += 15;
+      bullishScore += 10;
+      breakdown.location.bullish += 10;
       reasons.push("Price is in the lower portion of the recent range.");
     } else if (positionInRange >= 0.65) {
-      bearishScore += 15;
-      scoreBreakdown.location.bearish += 15;
+      bearishScore += 10;
+      breakdown.location.bearish += 10;
       reasons.push("Price is in the upper portion of the recent range.");
     } else {
-      bullishScore += 5;
-      bearishScore += 5;
-      scoreBreakdown.location.bullish += 5;
-      scoreBreakdown.location.bearish += 5;
+      bullishScore += 3;
+      bearishScore += 3;
+      breakdown.location.bullish += 3;
+      breakdown.location.bearish += 3;
       reasons.push("Price is near the middle of the recent range.");
     }
 
-    // Simple structure block: 15 points total
+    // Structure: 15 points
     const firstHalf = recent.slice(0, 25);
     const secondHalf = recent.slice(25);
 
@@ -223,49 +274,62 @@ export async function GET(request: Request) {
     const firstLow = Math.min(...firstHalf.map((c) => c.l));
     const secondLow = Math.min(...secondHalf.map((c) => c.l));
 
+    let structure: "BULLISH" | "BEARISH" | "MIXED" = "MIXED";
+
     if (secondHigh > firstHigh && secondLow > firstLow) {
+      structure = "BULLISH";
       bullishScore += 15;
-      scoreBreakdown.structure.bullish += 15;
+      breakdown.structure.bullish += 15;
       reasons.push("Recent structure shows higher highs and higher lows.");
     } else if (secondHigh < firstHigh && secondLow < firstLow) {
+      structure = "BEARISH";
       bearishScore += 15;
-      scoreBreakdown.structure.bearish += 15;
+      breakdown.structure.bearish += 15;
       reasons.push("Recent structure shows lower highs and lower lows.");
     } else {
-      bullishScore += 5;
-      bearishScore += 5;
-      scoreBreakdown.structure.bullish += 5;
-      scoreBreakdown.structure.bearish += 5;
+      bullishScore += 4;
+      bearishScore += 4;
+      breakdown.structure.bullish += 4;
+      breakdown.structure.bearish += 4;
       reasons.push("Recent market structure is mixed.");
     }
 
-    const totalDirectionalScore = bullishScore + bearishScore;
-    const scoreDifference = Math.abs(bullishScore - bearishScore);
+    const dominantScore = Math.max(bullishScore, bearishScore);
+    const weakerScore = Math.min(bullishScore, bearishScore);
+    const difference = Math.abs(bullishScore - bearishScore);
 
     let decision: "BUY" | "SELL" | "HOLD" = "HOLD";
     let trend: "Bullish" | "Bearish" | "Mixed" = "Mixed";
 
-    if (bullishScore >= 60 && bullishScore - bearishScore >= 20) {
+    if (bullishScore >= 65 && difference >= 18) {
       decision = "BUY";
       trend = "Bullish";
-    } else if (bearishScore >= 60 && bearishScore - bullishScore >= 20) {
+    } else if (bearishScore >= 65 && difference >= 18) {
       decision = "SELL";
       trend = "Bearish";
     }
 
     const confidence =
       decision === "HOLD"
-        ? Math.min(69, Math.round((scoreDifference / 100) * 100))
+        ? Math.min(69, difference)
         : Math.min(
             99,
             Math.max(
               70,
-              Math.round(
-                (Math.max(bullishScore, bearishScore) / totalDirectionalScore) *
-                  100
-              )
+              Math.round((dominantScore / Math.max(1, dominantScore + weakerScore)) * 100)
             )
           );
+
+    const grade =
+      decision === "HOLD"
+        ? "SKIP"
+        : confidence >= 92
+        ? "A+"
+        : confidence >= 85
+        ? "A"
+        : confidence >= 78
+        ? "B"
+        : "C";
 
     const stopDistance = Math.max(range * 0.25, live * 0.0015);
     const targetDistance = stopDistance * 2;
@@ -286,15 +350,17 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       success: true,
-      engine: "AURUM Unified Decision Engine v3",
+      engine: "AURUM Decision Engine v4",
       decision,
       trend,
       confidence,
+      grade,
+      structure,
       scores: {
         bullish: bullishScore,
         bearish: bearishScore,
-        difference: scoreDifference,
-        breakdown: scoreBreakdown,
+        difference,
+        breakdown,
       },
       price: round(live),
       entry: round(live),
@@ -307,11 +373,17 @@ export async function GET(request: Request) {
         ema20: round(ema20),
         ema50: round(ema50),
         ema200: round(ema200),
-        rsi14: round(rsi.rsi ?? 50),
+        rsi14: round(rsiValue),
         rsiCondition: rsi.condition,
         rsiMomentum: rsi.momentum,
         rsiSignal: rsi.signal,
-        rsiStrength: rsi.strength,
+        macd: round(macd.macd ?? 0, 4),
+        macdSignalLine: round(macd.signalLine ?? 0, 4),
+        macdHistogram: round(macd.histogram ?? 0, 4),
+        macdSignal: macd.signal,
+        macdMomentum: macd.momentum,
+        macdCrossover: macd.crossover,
+        macdStrength: macd.strength,
       },
       reasons,
       warning:
@@ -324,7 +396,7 @@ export async function GET(request: Request) {
         error:
           error instanceof Error
             ? error.message
-            : "Unknown unified decision-engine error",
+            : "Unknown AURUM decision-engine error",
       },
       { status: 500 }
     );
