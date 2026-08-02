@@ -5,28 +5,39 @@ import { useEffect, useMemo, useRef, useState } from "react";
 type Direction = "BUY" | "SELL" | "HOLD";
 type RiskMode = "Protect" | "Balanced" | "Aggressive";
 
-type TradePlan = {
-  direction: Direction;
-  objective: number;
-  entry: number | null;
-  stop: number | null;
-  target: number | null;
-  maxRisk: number;
-  confidence: number;
-  explanation: string;
+type DecisionResponse = {
+  success: boolean;
+  engine?: string;
+  decision?: Direction;
+  trend?: string;
+  confidence?: number;
+  price?: number;
+  entry?: number | null;
+  stop?: number | null;
+  target?: number | null;
+  support?: number;
+  resistance?: number;
+  riskReward?: number | null;
+  indicators?: {
+    ema20?: number;
+    ema50?: number;
+    ema200?: number;
+  };
+  votes?: {
+    bullish?: number;
+    bearish?: number;
+  };
+  reasons?: string[];
+  warning?: string;
+  error?: string;
 };
 
 type GoldQuote = {
   success: boolean;
-  provider?: string;
-  symbol?: string;
   price?: number | null;
   bid?: number | null;
   ask?: number | null;
   spread?: number | null;
-  timestamp?: number | null;
-  marketOpen?: boolean;
-  note?: string;
   error?: string;
 };
 
@@ -47,26 +58,14 @@ declare global {
   }
 }
 
-const defaultPlan: TradePlan = {
-  direction: "HOLD",
-  objective: 1000,
-  entry: null,
-  stop: null,
-  target: null,
-  maxRisk: 250,
-  confidence: 0,
-  explanation:
-    "Live XAU/USD data is connected. AURUM is holding until the tested decision engine is added.",
-};
-
-function money(value: number | null) {
-  return value === null
-    ? "Waiting"
-    : new Intl.NumberFormat("en-US", {
+function money(value: number | null | undefined) {
+  return typeof value === "number"
+    ? new Intl.NumberFormat("en-US", {
         style: "currency",
         currency: "USD",
         maximumFractionDigits: 2,
-      }).format(value);
+      }).format(value)
+    : "Waiting";
 }
 
 function price(value: number | null | undefined) {
@@ -80,66 +79,79 @@ function price(value: number | null | undefined) {
 
 export default function AurumDashboard() {
   const [riskMode, setRiskMode] = useState<RiskMode>("Balanced");
-  const [plan, setPlan] = useState<TradePlan>(defaultPlan);
+  const [objective, setObjective] = useState(1000);
+  const [maxRisk, setMaxRisk] = useState(250);
+
+  const [decision, setDecision] = useState<DecisionResponse | null>(null);
   const [quote, setQuote] = useState<GoldQuote | null>(null);
-  const [loadingQuote, setLoadingQuote] = useState(true);
-  const [quoteError, setQuoteError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [errorText, setErrorText] = useState("");
+
   const [heard, setHeard] = useState("");
   const [message, setMessage] = useState(
-    "AURUM is ready. Live gold data is connected. Voice commands prepare paper-trade objectives only."
+    "AURUM is connected to live gold data and the EMA decision engine."
   );
   const [listening, setListening] = useState(false);
+
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
 
   const canExecute = useMemo(
     () =>
-      plan.direction !== "HOLD" &&
-      plan.entry !== null &&
-      plan.stop !== null &&
-      plan.target !== null &&
-      plan.confidence >= 85,
-    [plan]
+      decision?.success === true &&
+      decision.decision !== "HOLD" &&
+      typeof decision.entry === "number" &&
+      typeof decision.stop === "number" &&
+      typeof decision.target === "number" &&
+      (decision.confidence ?? 0) >= 85,
+    [decision]
   );
 
-  async function loadGoldQuote() {
+  async function loadData() {
     try {
-      setLoadingQuote(true);
-      setQuoteError("");
-      const response = await fetch("/api/gold", { cache: "no-store" });
-      const data: GoldQuote = await response.json();
+      setLoading(true);
+      setErrorText("");
 
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || "Gold quote unavailable");
+      const [decisionRes, quoteRes] = await Promise.all([
+        fetch("/api/decision", { cache: "no-store" }),
+        fetch("/api/gold", { cache: "no-store" }),
+      ]);
+
+      const decisionData: DecisionResponse = await decisionRes.json();
+      const quoteData: GoldQuote = await quoteRes.json();
+
+      if (!decisionRes.ok || !decisionData.success) {
+        throw new Error(decisionData.error || "Decision engine unavailable");
       }
 
-      setQuote(data);
-      setPlan((current) => ({
-        ...current,
-        explanation:
-          "Live XAU/USD data is connected. AURUM is holding until the tested decision engine is added.",
-      }));
+      if (!quoteRes.ok || !quoteData.success) {
+        throw new Error(quoteData.error || "Live quote unavailable");
+      }
+
+      setDecision(decisionData);
+      setQuote(quoteData);
+      setMessage(
+        `${decisionData.engine ?? "Decision engine"} is active. Current signal: ${
+          decisionData.decision ?? "HOLD"
+        } at ${decisionData.confidence ?? 0}% confidence.`
+      );
     } catch (error) {
       const text =
-        error instanceof Error ? error.message : "Unable to load gold data";
-      setQuoteError(text);
-      setPlan((current) => ({
-        ...current,
-        direction: "HOLD",
+        error instanceof Error ? error.message : "Unable to load AURUM data";
+      setErrorText(text);
+      setDecision({
+        success: false,
+        decision: "HOLD",
         confidence: 0,
-        entry: null,
-        stop: null,
-        target: null,
-        explanation:
-          "AURUM cannot validate the live market feed, so it will not create a trade.",
-      }));
+        error: text,
+      });
     } finally {
-      setLoadingQuote(false);
+      setLoading(false);
     }
   }
 
   useEffect(() => {
-    loadGoldQuote();
-    const timer = window.setInterval(loadGoldQuote, 15000);
+    loadData();
+    const timer = window.setInterval(loadData, 15000);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -156,65 +168,54 @@ export default function AurumDashboard() {
     setHeard(raw);
 
     const amountMatch = command.match(/\$?\s?(\d{2,6})/);
-    const objective = amountMatch ? Number(amountMatch[1]) : plan.objective;
+    if (amountMatch) setObjective(Number(amountMatch[1]));
 
-    let nextMode = riskMode;
-    if (command.includes("protect")) nextMode = "Protect";
-    if (command.includes("aggressive")) nextMode = "Aggressive";
-    if (command.includes("balanced")) nextMode = "Balanced";
-    setRiskMode(nextMode);
+    if (command.includes("protect")) {
+      setRiskMode("Protect");
+      setMaxRisk(150);
+    } else if (command.includes("aggressive")) {
+      setRiskMode("Aggressive");
+      setMaxRisk(400);
+    } else if (command.includes("balanced")) {
+      setRiskMode("Balanced");
+      setMaxRisk(250);
+    }
 
     if (
-      command.includes("trade for me") ||
-      command.includes("make") ||
-      command.includes("prepare")
+      command.includes("trade") ||
+      command.includes("buy") ||
+      command.includes("sell") ||
+      command.includes("decision") ||
+      command.includes("status")
     ) {
-      const maxRisk =
-        nextMode === "Protect" ? 150 : nextMode === "Aggressive" ? 400 : 250;
-      const response =
-        `Objective set to ${objective.toLocaleString()} dollars. ` +
-        "Live gold data is connected, but AURUM will remain on HOLD until the tested decision engine is installed.";
+      const text = decision?.success
+        ? `${decision.decision}. Confidence ${
+            decision.confidence ?? 0
+          } percent. Entry ${price(decision.entry)}. Stop ${price(
+            decision.stop
+          )}. Target ${price(decision.target)}.`
+        : "The decision engine is unavailable, so AURUM is holding.";
 
-      setPlan((current) => ({
-        ...current,
-        objective,
-        maxRisk,
-        direction: "HOLD",
-        confidence: 0,
-        entry: null,
-        stop: null,
-        target: null,
-      }));
-      setMessage(response);
-      speak(response);
+      setMessage(text);
+      speak(text);
       return;
     }
 
-    if (command.includes("price") || command.includes("gold")) {
-      const response =
-        quote?.price != null
-          ? `The latest gold midpoint is ${price(quote.price)} dollars.`
+    if (command.includes("gold") || command.includes("price")) {
+      const text =
+        typeof quote?.price === "number"
+          ? `The current gold midpoint is ${price(quote.price)} dollars.`
           : "The current gold price is unavailable.";
-      setMessage(response);
-      speak(response);
+
+      setMessage(text);
+      speak(text);
       return;
     }
 
-    if (command.includes("what") || command.includes("status")) {
-      const response = quoteError
-        ? `Market data error: ${quoteError}`
-        : `Live gold data is connected. Current price is ${price(
-            quote?.price
-          )}. The trade engine remains locked on HOLD.`;
-      setMessage(response);
-      speak(response);
-      return;
-    }
-
-    const response =
-      'Try saying: "AURUM, what is the gold price?" or "Prepare a one-thousand-dollar objective."';
-    setMessage(response);
-    speak(response);
+    const text =
+      'Try saying: "AURUM, what is the decision?" or "What is the gold price?"';
+    setMessage(text);
+    speak(text);
   }
 
   function beginListening() {
@@ -222,9 +223,7 @@ export default function AurumDashboard() {
       window.SpeechRecognition || window.webkitSpeechRecognition;
 
     if (!Recognition) {
-      setMessage(
-        "Speech recognition is not supported by this browser. Chrome desktop is recommended."
-      );
+      setMessage("Speech recognition is not supported in this browser.");
       return;
     }
 
@@ -245,6 +244,9 @@ export default function AurumDashboard() {
     recognition.start();
   }
 
+  const currentDecision = decision?.decision ?? "HOLD";
+  const reasons = decision?.reasons ?? [];
+
   return (
     <main className="shell">
       <section className="topbar">
@@ -252,68 +254,173 @@ export default function AurumDashboard() {
           <p className="eyebrow">PRIVATE GOLD TRADING WORKSPACE</p>
           <h1>AURUM AI</h1>
         </div>
-        <span className="status"><i /> Live Data Mode</span>
+        <span className="status">
+          <i /> Decision Engine Live
+        </span>
       </section>
 
       <section className="hero card">
         <div className="signal">
           <span>Current Decision</span>
-          <strong className={plan.direction.toLowerCase()}>{plan.direction}</strong>
-          <p>{plan.explanation}</p>
+          <strong className={currentDecision.toLowerCase()}>
+            {loading ? "LOADING" : currentDecision}
+          </strong>
+          <p>
+            {errorText ||
+              reasons.join(" · ") ||
+              "Waiting for validated decision data."}
+          </p>
         </div>
+
         <div className="confidence">
           <span>Validated confidence</span>
-          <b>{plan.confidence}%</b>
-          <small>Locked until calculated by the tested decision engine</small>
+          <b>{decision?.confidence ?? 0}%</b>
+          <small>{decision?.engine ?? "Decision engine loading"}</small>
         </div>
       </section>
 
       <section className="metrics">
-        <article className="card"><span>Live XAU/USD</span><strong>{loadingQuote ? "Loading..." : `$${price(quote?.price)}`}</strong></article>
-        <article className="card"><span>Bid / Ask</span><strong>{price(quote?.bid)} / {price(quote?.ask)}</strong></article>
-        <article className="card"><span>Spread</span><strong>{price(quote?.spread)}</strong></article>
-        <article className="card"><span>Profit objective</span><strong>${plan.objective.toLocaleString()}</strong></article>
-        <article className="card"><span>Maximum risk</span><strong>${plan.maxRisk.toLocaleString()}</strong></article>
-        <article className="card"><span>Entry</span><strong>{money(plan.entry)}</strong></article>
-        <article className="card"><span>Stop loss</span><strong>{money(plan.stop)}</strong></article>
-        <article className="card"><span>Take profit</span><strong>{money(plan.target)}</strong></article>
+        <article className="card">
+          <span>Live XAU/USD</span>
+          <strong>{money(quote?.price)}</strong>
+        </article>
+        <article className="card">
+          <span>Bid / Ask</span>
+          <strong>
+            {price(quote?.bid)} / {price(quote?.ask)}
+          </strong>
+        </article>
+        <article className="card">
+          <span>Spread</span>
+          <strong>{price(quote?.spread)}</strong>
+        </article>
+        <article className="card">
+          <span>Trend</span>
+          <strong>{decision?.trend ?? "Waiting"}</strong>
+        </article>
+        <article className="card">
+          <span>Entry</span>
+          <strong>{money(decision?.entry)}</strong>
+        </article>
+        <article className="card">
+          <span>Stop loss</span>
+          <strong>{money(decision?.stop)}</strong>
+        </article>
+        <article className="card">
+          <span>Take profit</span>
+          <strong>{money(decision?.target)}</strong>
+        </article>
+        <article className="card">
+          <span>Risk / Reward</span>
+          <strong>
+            {typeof decision?.riskReward === "number"
+              ? `1 : ${decision.riskReward}`
+              : "Waiting"}
+          </strong>
+        </article>
+        <article className="card">
+          <span>EMA 20</span>
+          <strong>{price(decision?.indicators?.ema20)}</strong>
+        </article>
+        <article className="card">
+          <span>EMA 50</span>
+          <strong>{price(decision?.indicators?.ema50)}</strong>
+        </article>
+        <article className="card">
+          <span>EMA 200</span>
+          <strong>{price(decision?.indicators?.ema200)}</strong>
+        </article>
+        <article className="card">
+          <span>Support / Resistance</span>
+          <strong>
+            {price(decision?.support)} / {price(decision?.resistance)}
+          </strong>
+        </article>
       </section>
 
       <section className="workspace">
         <article className="card voicePanel">
           <div>
             <span className="label">AI voice command</span>
-            <h2>Tell AURUM the objective.</h2>
-            <p className="message">{quoteError || message}</p>
+            <h2>Ask AURUM about the trade.</h2>
+            <p className="message">{message}</p>
             {heard && <p className="heard">You said: “{heard}”</p>}
           </div>
 
-          <button className="voiceButton" disabled={listening} onClick={beginListening} type="button">
+          <button
+            className="voiceButton"
+            disabled={listening}
+            onClick={beginListening}
+            type="button"
+          >
             {listening ? "Listening..." : "🎙 Speak to AURUM"}
           </button>
 
           <div className="quickCommands">
-            <button type="button" onClick={() => processCommand("Prepare a $1000 objective")}>Prepare $1,000 objective</button>
-            <button type="button" onClick={() => processCommand("What is the gold price?")}>Gold price</button>
-            <button type="button" onClick={loadGoldQuote}>Refresh live data</button>
+            <button
+              type="button"
+              onClick={() => processCommand("What is the decision?")}
+            >
+              Current decision
+            </button>
+            <button
+              type="button"
+              onClick={() => processCommand("What is the gold price?")}
+            >
+              Gold price
+            </button>
+            <button type="button" onClick={loadData}>
+              Refresh analysis
+            </button>
           </div>
         </article>
 
         <article className="card controls">
           <span className="label">Preset risk mode</span>
+
           <div className="riskModes">
-            {(["Protect", "Balanced", "Aggressive"] as RiskMode[]).map((mode) => (
-              <button type="button" key={mode} className={riskMode === mode ? "active" : ""} onClick={() => setRiskMode(mode)}>
-                {mode}
-              </button>
-            ))}
+            {(["Protect", "Balanced", "Aggressive"] as RiskMode[]).map(
+              (mode) => (
+                <button
+                  type="button"
+                  key={mode}
+                  className={riskMode === mode ? "active" : ""}
+                  onClick={() => {
+                    setRiskMode(mode);
+                    setMaxRisk(
+                      mode === "Protect" ? 150 : mode === "Aggressive" ? 400 : 250
+                    );
+                  }}
+                >
+                  {mode}
+                </button>
+              )
+            )}
           </div>
-          <button type="button" className="execute" disabled={!canExecute}>EXECUTE PAPER TRADE</button>
-          <p className="safety">Live execution remains unavailable. Paper execution stays locked until a tested strategy generates a complete trade plan.</p>
+
+          <div className="message">
+            Objective: ${objective.toLocaleString()} · Max risk: $
+            {maxRisk.toLocaleString()}
+          </div>
+
+          <button
+            type="button"
+            className="execute"
+            disabled={!canExecute}
+          >
+            EXECUTE PAPER TRADE
+          </button>
+
+          <p className="safety">
+            Paper execution unlocks only when a complete trade plan reaches at
+            least 85% confidence. Live broker execution remains disabled.
+          </p>
         </article>
       </section>
 
-      <footer>AURUM AI V2 · Live XAU/USD connected · Trade engine locked pending validation</footer>
+      <footer>
+        AURUM AI V2 · Live XAU/USD · EMA Trend Engine v2 · Analytical output only
+      </footer>
     </main>
   );
 }
