@@ -31,6 +31,27 @@ type MacdResponse = {
   error?: string;
 };
 
+type AtrResponse = {
+  success: boolean;
+  atr?: number;
+  previousAtr?: number;
+  change?: number;
+  atrPercent?: number;
+  volatility?: "LOW" | "NORMAL" | "HIGH" | "EXTREME";
+  direction?: "EXPANDING" | "CONTRACTING" | "FLAT";
+  recommendedStops?: {
+    protect?: number;
+    balanced?: number;
+    aggressive?: number;
+  };
+  recommendedTargets?: {
+    protect?: number;
+    balanced?: number;
+    aggressive?: number;
+  };
+  error?: string;
+};
+
 function ema(values: number[], period: number): number {
   const multiplier = 2 / (period + 1);
   let result = values[0];
@@ -52,17 +73,19 @@ export async function GET(request: Request) {
   const base = new URL(request.url).origin;
 
   try {
-    const [historyRes, goldRes, rsiRes, macdRes] = await Promise.all([
+    const [historyRes, goldRes, rsiRes, macdRes, atrRes] = await Promise.all([
       fetch(`${base}/api/history`, { cache: "no-store" }),
       fetch(`${base}/api/gold`, { cache: "no-store" }),
       fetch(`${base}/api/rsi`, { cache: "no-store" }),
       fetch(`${base}/api/macd`, { cache: "no-store" }),
+      fetch(`${base}/api/atr`, { cache: "no-store" }),
     ]);
 
     const history = await historyRes.json();
     const gold = await goldRes.json();
     const rsi: RsiResponse = await rsiRes.json();
     const macd: MacdResponse = await macdRes.json();
+    const atr: AtrResponse = await atrRes.json();
 
     if (!historyRes.ok || !history.success) {
       return NextResponse.json(
@@ -88,6 +111,13 @@ export async function GET(request: Request) {
     if (!macdRes.ok || !macd.success) {
       return NextResponse.json(
         { success: false, error: macd.error || "MACD engine unavailable." },
+        { status: 502 }
+      );
+    }
+
+    if (!atrRes.ok || !atr.success) {
+      return NextResponse.json(
+        { success: false, error: atr.error || "ATR engine unavailable." },
         { status: 502 }
       );
     }
@@ -145,7 +175,6 @@ export async function GET(request: Request) {
       structure: { bullish: 0, bearish: 0, max: 15 },
     };
 
-    // EMA: 35 points
     if (live > ema20) {
       bullishScore += 10;
       breakdown.ema.bullish += 10;
@@ -186,7 +215,6 @@ export async function GET(request: Request) {
       reasons.push("Price is below EMA 200.");
     }
 
-    // RSI: 20 points
     const rsiValue = rsi.rsi ?? 50;
 
     if (rsi.signal === "BUY_BIAS") {
@@ -213,7 +241,6 @@ export async function GET(request: Request) {
       reasons.push("RSI is neutral.");
     }
 
-    // MACD: 20 points
     if (macd.signal === "BULLISH") {
       let points = 12;
       if (macd.momentum === "STRENGTHENING") points += 4;
@@ -246,7 +273,6 @@ export async function GET(request: Request) {
       reasons.push("MACD is neutral.");
     }
 
-    // Price location: 10 points
     const positionInRange = (live - support) / range;
 
     if (positionInRange <= 0.35) {
@@ -265,7 +291,6 @@ export async function GET(request: Request) {
       reasons.push("Price is near the middle of the recent range.");
     }
 
-    // Structure: 15 points
     const firstHalf = recent.slice(0, 25);
     const secondHalf = recent.slice(25);
 
@@ -316,7 +341,9 @@ export async function GET(request: Request) {
             99,
             Math.max(
               70,
-              Math.round((dominantScore / Math.max(1, dominantScore + weakerScore)) * 100)
+              Math.round(
+                (dominantScore / Math.max(1, dominantScore + weakerScore)) * 100
+              )
             )
           );
 
@@ -331,8 +358,34 @@ export async function GET(request: Request) {
         ? "B"
         : "C";
 
-    const stopDistance = Math.max(range * 0.25, live * 0.0015);
-    const targetDistance = stopDistance * 2;
+    const atrValue = Number(atr.atr ?? 0);
+
+    if (!Number.isFinite(atrValue) || atrValue <= 0) {
+      return NextResponse.json(
+        { success: false, error: "ATR value is invalid." },
+        { status: 422 }
+      );
+    }
+
+    const volatility = atr.volatility ?? "NORMAL";
+    const volatilityDirection = atr.direction ?? "FLAT";
+
+    let stopMultiplier = 1.5;
+    let targetMultiplier = 3;
+
+    if (volatility === "LOW") {
+      stopMultiplier = 1.2;
+      targetMultiplier = 2.2;
+    } else if (volatility === "HIGH") {
+      stopMultiplier = 1.8;
+      targetMultiplier = 3.2;
+    } else if (volatility === "EXTREME") {
+      stopMultiplier = 2.2;
+      targetMultiplier = 3.3;
+    }
+
+    const stopDistance = atrValue * stopMultiplier;
+    const targetDistance = atrValue * targetMultiplier;
 
     const stop =
       decision === "BUY"
@@ -348,9 +401,16 @@ export async function GET(request: Request) {
         ? live - targetDistance
         : null;
 
+    const riskReward =
+      decision === "HOLD" ? null : round(targetDistance / stopDistance, 2);
+
+    reasons.push(
+      `ATR volatility is ${volatility.toLowerCase()} and ${volatilityDirection.toLowerCase()}.`
+    );
+
     return NextResponse.json({
       success: true,
-      engine: "AURUM Decision Engine v4",
+      engine: "AURUM Decision Engine v5",
       decision,
       trend,
       confidence,
@@ -368,7 +428,18 @@ export async function GET(request: Request) {
       target: target === null ? null : round(target),
       support: round(support),
       resistance: round(resistance),
-      riskReward: decision === "HOLD" ? null : 2,
+      riskReward,
+      riskModel: {
+        source: "ATR",
+        atr: round(atrValue, 4),
+        atrPercent: round(Number(atr.atrPercent ?? 0), 4),
+        volatility,
+        direction: volatilityDirection,
+        stopMultiplier,
+        targetMultiplier,
+        stopDistance: round(stopDistance, 2),
+        targetDistance: round(targetDistance, 2),
+      },
       indicators: {
         ema20: round(ema20),
         ema50: round(ema50),
@@ -384,6 +455,9 @@ export async function GET(request: Request) {
         macdMomentum: macd.momentum,
         macdCrossover: macd.crossover,
         macdStrength: macd.strength,
+        atr14: round(atrValue, 4),
+        atrVolatility: volatility,
+        atrDirection: volatilityDirection,
       },
       reasons,
       warning:
