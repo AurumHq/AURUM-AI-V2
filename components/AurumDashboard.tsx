@@ -1,6 +1,5 @@
 // AURUM X Hero Component
-export function AurumHero({decision,confidence,entry,stop,target,waveScore}:any){
-return (
+export default function AurumDashboard({decision,confidence,entry,stop,target,waveScore}:any){
 <section className="rounded-3xl border border-yellow-700 bg-[#11110d] p-8">
 <div className="flex justify-between items-center">
 <div>
