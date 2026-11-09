@@ -1,66 +1,52 @@
-# AURUM R8 Canonical Recovery Notes — Build Accepted — 2026-11-07
+# AURUM R8 Canonical Recovery Notes — Deployment Accepted — 2026-11-09
 
 ## Canonical source package
 
-- Build-accepted source ZIP: `AURUM-R8-CANONICAL-SOURCE-BUILD-ACCEPTED-2026-11-07.zip`
-- ZIP SHA-256: `f62b2bd6561c4ce829fc25eac59e7addd2ded522eec8986bcd193637f893bcf5`
-- Canonical manifest/tree SHA-256: `58aa48d442b46b381537e7e80a59d3a25b370b483777b69d1986c98dd1fe11df`
-- Manifested files: 499
-- Manifested bytes: 9,152,312
-- Exact local production-build evidence is embedded as `BUILD_ACCEPTANCE_2026-11-07.txt`.
-
-## Current validated runtime hashes
-
-- `lib/server/autonomousRuntime.ts`
-  `5fb14fe7cf1a18c67d28dda79e0cca85cda69bc651e10aeb14d0b5bc394abcc9`
-- `lib/client/autonomousRuntimeStatus.ts`
-  `f74bf84b42ad2ad9ec5fe410013b4b0ebe7aee3a804b696532663f80fb5a5299`
-- `tests/autonomousRuntime.test.ts`
-  `fb766792da7000839e8eb1ce46492426e7d74e1aac7865ce703a17023b8e0b49`
-- `lib/domain/equatorV11Challenger.ts`
-  `e453a0cfe0303c10cf20366e99dce38ccb53da73946f47971799bc912918af2e`
-- `tests/paperEngineEndToEndAcceptance.test.ts`
-  `fd44d7a9469591e803c86e152fd5c8ec5ada603141dcaac0ca559e0dd44d1629`
+- Archive: `AURUM-R8-CANONICAL-SOURCE-DEPLOYMENT-ACCEPTED-2026-11-09.zip`
+- ZIP SHA-256: `cb6802b4ca174512f44c10498c3106a3a47216db8e19c6cb446167341c1474a2`
+- Canonical source tree SHA-256: `467a74fa2e4a20e867c9b8ee60f3ca9351f09f7522d83ec6b55123a8eb6d50d4`
+- Manifested files: 504
+- Manifested bytes: 9,156,391
+- Secret scan hits: 0
+- Sensitive credential/private-key filenames: 0
 
 ## Production build acceptance
 
-Validated on the Founder's current R8 source on 2026-11-07:
+- Source identity: `ACCEPTED_R8_CURRENT`
+- TypeScript: exit 0
+- Next.js production build: exit 0
+- Next.js 16.3.0 / Turbopack compilation: successful
+- Static pages: generated successfully
+- Dynamic API routes: discovered successfully
+- Diff integrity: exit 0
 
-- source identity: `ACCEPTED_R8_CURRENT`
-- `npm run typecheck`: exit 0
-- `npm run build`: exit 0
-- Next.js 16.3.0 / Turbopack production compilation: successful
-- static page generation: successful
-- dynamic API route discovery: successful
-- `git diff --check`: exit 0
+## Governance-blocked runtime acceptance
 
-The stale remote `main` build defect is therefore not present in the recovered R8 source.
+- `EQUATOR_GOVERNANCE_BLOCKED` runtime projection accepted
+- TypeScript: exit 0
+- Focused tests: 20/20 passed
+- Diff integrity: exit 0
 
-## Governance-blocked runtime
+## Vercel Daemon deployment-contract acceptance
 
-The accepted runtime now projects stale Equator authority explicitly as:
+Validated on the current R8 source on 2026-11-09:
 
-`EQUATOR_GOVERNANCE_BLOCKED`
+- `Dockerfile` SHA-256: `6224e82e9b7fd9450e291d0e5ad462efdd05dde0a5941895bc56e0c26f7f7558`
+- `.dockerignore` SHA-256: `a559181e08915883898cb578bec33eccd2852c0b59a353ad54d7bb3c76033a28`
+- `vercel.json` SHA-256: `2edcf8b341be23021ef41a62cde6a18f826181c19ca0664e8b221c1931a887f5`
+- `tests/vercelDaemonDeployment.test.ts` SHA-256: `904d443942b318a957babdae35dee9c2fc591e96f3027de5ed07f7d9cb1fa846`
+- TypeScript: exit 0
+- Deployment/runtime contract tests: 5/5 passed
+- Diff integrity: exit 0
 
-This is a non-trading operational state. It does not authorize candidate generation, broker execution, or real-money activity. Other data/provider/historian failures remain fail-closed.
+This validates the deployment configuration contract. It does not itself prove that the Vercel project has production credentials configured or that the daemon has been deployed and observed running.
 
-## Security scan
+## Equator governance
 
-Build-accepted clean package scan found:
-
-- sensitive filename hits: 0
-- common private-key/API-key/PAT/AWS-key/PostgreSQL credential pattern hits: 0
-- no `.env` credential files included
-
-## Governance state
-
-- Frozen Equator V1 fresh revalidation: `REJECTED_OR_INCOMPLETE`.
-- Fold 1 / 15m reliability gap: `0.217172`.
-- Fold 1 / 30m reliability gap: `0.249711`.
-- Equator V1.1 challenger failed those same two forward reliability gates.
+- Frozen V1 remains `REJECTED_OR_INCOMPLETE` on the already-observed revalidation window.
+- V1.1 challenger remains rejected on the same two Fold-1 forward reliability gates.
 - No threshold loosening or repeated holdout tuning is authorized.
-- Paper engine E2E acceptance: passed.
-- Real-money authority remains locked.
+- Future promotion requires genuinely unseen prospective evidence under the preregistered protocol.
 
 ## Safety invariants
 
